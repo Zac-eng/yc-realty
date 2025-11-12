@@ -1,6 +1,6 @@
 # Luxury Real Estate AI Video Generation System
 
-Complete automation system for generating high-end property videos using **Google Veo** and **FFmpeg**.
+Complete automation system for generating high-end property videos and video editor using **Google Veo** and **FFmpeg**.
 
 ## Features
 
