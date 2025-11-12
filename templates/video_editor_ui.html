@@ -620,7 +620,7 @@
 
             // Check if user uploaded an image for video generation
             if (!state.uploadedImage) {
-                alert('Please attach an image first');
+                const dedalus_output = callDedalus(text);
                 return;
             }
 
@@ -681,6 +681,14 @@
                 state.uploadedImage = null; // Reset
                 attachedImagePreview.classList.add('hidden');
             });
+        }
+
+        async function callDedalus(input) {
+            const response = await fetch('/genimg', {
+                method: 'POST',
+            });
+            const result = await response.json();
+            console.log(result)
         }
 
         function addChatMessage(role, content, isResponse = false, videoUrl = null) {

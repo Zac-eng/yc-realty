@@ -706,3 +706,35 @@ def download_editor_video():
     except Exception as e:
         logger.error(f"Download error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
+
+# additional feature besides our first version, adding dedalus
+import asyncio
+from dedalus_labs import AsyncDedalus, DedalusRunner
+from dedalus_labs.utils.stream import stream_async
+
+@web_ui_blueprint.route('/genimg', methods=['POST'])
+async def generate_images_ddls():
+    try:
+        api_key = os.getenv("DEDALUS_API_KEY")
+        if not api_key:
+            return jsonify({
+                "status": "error",
+                "message": "no dedalus api key"
+            }), 500
+        client = AsyncDedalus()
+        runner = DedalusRunner(client)
+        response = await runner.run(
+            input="create image",
+            model="openai/dall-e-3",
+            mcp_servers=["haruto/yc-realty"]
+        )
+        return jsonify({
+            "status": "success",
+            "message": response,
+        }), 200
+
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": "Unexpected error occured when running MCP server. try again later"
+        }), 500
