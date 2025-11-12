@@ -10,6 +10,7 @@ Complete automation system for generating high-end property videos and video edi
 - **High-End Prompts**: Pre-configured cinematic prompts for luxury real estate
 - **Complete Workflow**: From image upload to final video output
 - **Progress Tracking**: Real-time progress bars and detailed logging
+- **AI Video Editor**: Edit unrelated imagery which Veo has created.
 
 ## System Architecture
 
