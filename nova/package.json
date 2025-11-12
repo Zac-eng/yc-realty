@@ -1,0 +1,26 @@
+{
+  "name": "nova-test",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.927.0",
+    "@aws-sdk/client-sts": "^3.927.0",
+    "dotenv": "^17.2.3",
+    "file-type": "^21.0.0",
+    "fs-extra": "^11.3.2",
+    "sharp": "^0.34.5"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}
