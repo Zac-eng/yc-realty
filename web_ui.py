@@ -9,6 +9,9 @@ from werkzeug.utils import secure_filename
 from generate_property_video import PropertyVideoGenerator
 from frame_editor import FrameEditor, AIFrameEditor
 from pathlib import Path
+from async_tasks import property_video_generation_task
+from supabase_client import supabase_client
+from datetime import datetime
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -113,9 +116,11 @@ def upload_files():
 @web_ui_blueprint.route('/generate', methods=['POST'])
 def generate_video():
     """
-    Start the video generation process.
-    NOTE: This is a synchronous implementation that will block the server.
-    For production use, consider using Celery, RQ, or similar task queue.
+    Start the async video generation process using Celery.
+
+    This endpoint creates a Celery task for property video generation.
+    NOTE: This task will make 3 separate billable Veo API calls (one per image).
+    The task returns immediately and processes videos asynchronously.
     """
     if 'session_id' not in session or 'uploaded_files' not in session:
         return jsonify({
@@ -132,62 +137,61 @@ def generate_video():
 
     session_id = session['session_id']
     image_paths = session['uploaded_files']
-
-    # Mark generation as started
-    session['generation_status'] = 'GENERATING_CLIPS'
-    session['generation_progress'] = 20
-
-    generator = PropertyVideoGenerator(
-        api_key=api_key,
-        output_dir='output',
-        session_name=session_id
-    )
+    user_id = session.get('user_id', 'anonymous')
 
     try:
-        final_video_path = generator.generate_complete_property_video(
-            image_paths=image_paths
+        # Create Supabase task record
+        num_api_calls = len(image_paths)
+        db_task = supabase_client.create_task({
+            'task_type': 'property_video_generation',
+            'status': 'pending',
+            'progress': 0,
+            'user_id': user_id,
+            'session_id': session_id,
+            'input_data': {
+                'image_paths': image_paths,
+                'num_images': num_api_calls,
+                'api_calls_required': num_api_calls
+            },
+            'created_at': datetime.utcnow().isoformat()
+        })
+
+        db_task_id = db_task['id']
+
+        # Launch Celery task asynchronously
+        celery_result = property_video_generation_task.apply_async(
+            kwargs={
+                'db_task_id': db_task_id,
+                'session_id': session_id,
+                'image_paths': image_paths,
+                'user_id': user_id
+            }
         )
-        session['final_video'] = final_video_path
-        session['generation_status'] = 'COMPLETE'
-        session['generation_progress'] = 100
+
+        celery_task_id = celery_result.id
+
+        # Store task IDs in session
+        session['current_task_id'] = db_task_id
+        session['celery_task_id'] = celery_task_id
+        session['generation_status'] = 'STARTED'
+
+        logger.info(f"Property video generation task started: db_task_id={db_task_id}, celery_task_id={celery_task_id}")
+        logger.warning(f"⚠️  Task will make {num_api_calls} billable Veo API calls")
 
         return jsonify({
-            "status": "complete",
-            "message": "Video generation completed successfully!",
-            "final_video_url": "/download",
-            "editor_url": "/video/editor"
+            "status": "started",
+            "task_id": db_task_id,
+            "celery_task_id": celery_task_id,
+            "message": f"Video generation started. Processing {num_api_calls} images with {num_api_calls} separate Veo API calls. This will take 15-20 minutes.",
+            "api_calls": num_api_calls,
+            "estimated_duration_minutes": "15-20"
         })
-    except ValueError as e:
-        # クォータ超過などのユーザー向けエラーメッセージ
-        error_msg = str(e)
-        session['generation_status'] = 'ERROR'
-        session['generation_error'] = error_msg
-        return jsonify({
-            "status": "error",
-            "message": error_msg
-        }), 500
+
     except Exception as e:
-        session['generation_status'] = 'ERROR'
-        error_str = str(e)
-        
-        # 429エラーをチェック
-        if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str or "quota" in error_str.lower():
-            error_msg = (
-                "API quota limit reached.\n\n"
-                "Google AI API usage limit exceeded.\n\n"
-                "Solutions:\n"
-                "1. Check your usage at Google AI Studio (https://ai.dev/usage)\n"
-                "2. Review your plan and billing information\n"
-                "3. Rate limit details: https://ai.google.dev/gemini-api/docs/rate-limits\n"
-                "4. Please wait a while and try again"
-            )
-        else:
-            error_msg = f"Error occurred during video generation: {error_str}"
-        
-        session['generation_error'] = error_msg
+        logger.error(f"Failed to start video generation task: {e}", exc_info=True)
         return jsonify({
             "status": "error",
-            "message": error_msg
+            "message": f"Failed to start video generation: {str(e)}"
         }), 500
 
 @web_ui_blueprint.route('/status')

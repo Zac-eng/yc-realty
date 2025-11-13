@@ -37,6 +37,40 @@ class VeoVideoGenerator:
         self.client = genai.Client(api_key=api_key)
         logger.info(f"Initialized Veo Video Generator with model: {self.VEO_MODEL}")
 
+    def _wait_for_operation(self, operation, timeout: int = 600):
+        """
+        Wait for a long-running Veo operation to finish while keeping polling costs low.
+        """
+        wait_fn = getattr(getattr(self.client, "operations", None), "wait", None)
+
+        if callable(wait_fn):
+            logger.info("Using operations.wait to block until the Veo job finishes (reduced polling cost).")
+            try:
+                return wait_fn(name=operation.name, timeout=timeout)
+            except TypeError:
+                # Some SDK versions expect the name as a positional arg.
+                return wait_fn(operation.name, timeout=timeout)
+
+        logger.info("operations.wait not available; falling back to a low-frequency polling loop.")
+        start_time = time.time()
+        sleep_seconds = 30
+        max_sleep = 90
+
+        while True:
+            if operation.done:
+                return operation
+
+            elapsed = time.time() - start_time
+            if elapsed > timeout:
+                raise TimeoutError(f"Video generation timed out after {timeout} seconds")
+
+            logger.info(f"Polling operation... Elapsed: {elapsed:.1f}s, Next check in: {sleep_seconds:.1f}s")
+            time.sleep(sleep_seconds)
+            operation = self.client.operations.get(name=operation.name)
+
+            if sleep_seconds < max_sleep:
+                sleep_seconds = min(sleep_seconds * 1.5, max_sleep)
+
     def upload_image(self, image_path: str):
         """
         Upload image to Google AI storage
@@ -57,16 +91,30 @@ class VeoVideoGenerator:
             uploaded_file = self.client.files.upload(file=image_path)
             logger.info(f"Image uploaded successfully: {uploaded_file.name}")
 
-            # Wait for file to be processed
+            # Wait for file to be processed with cost-optimized polling
             logger.info("Waiting for image to be processed...")
+            logger.info("API Cost Optimization: Using 5-second polling interval with 60-second timeout")
+            start_time = time.time()
+            timeout = 60  # 60-second timeout to prevent excessive API calls
+            polling_interval = 5  # 5-second polling interval (cost-optimized)
+            api_call_count = 0
+
             while uploaded_file.state == "PROCESSING":
-                time.sleep(2)
+                elapsed = time.time() - start_time
+                if elapsed > timeout:
+                    logger.warning(f"Image processing timed out. Total API calls made: {api_call_count}")
+                    raise TimeoutError(f"Image processing timed out after {timeout} seconds")
+
+                logger.info(f"Image processing... State: {uploaded_file.state}, Elapsed: {elapsed:.1f}s")
+                time.sleep(polling_interval)
                 uploaded_file = self.client.files.get(uploaded_file.name)
+                api_call_count += 1
+                logger.warning(f"API Call Count (image processing): {api_call_count} | Polling interval: {polling_interval}s")
 
             if uploaded_file.state == "FAILED":
                 raise ValueError(f"Image processing failed")
 
-            logger.info("Image ready for video generation")
+            logger.info(f"Image ready for video generation. Total API calls: {api_call_count}")
             return uploaded_file
 
         except Exception as e:
@@ -123,23 +171,10 @@ class VeoVideoGenerator:
 
             logger.info(f"Video generation started. Operation name: {operation.name}")
 
-            # Poll until video generation completes
-            logger.info("Waiting for video generation to complete...")
-            poll_count = 0
-            max_polls = 120  # 10 minutes with 5 second intervals
-
-            while not operation.done:
-                time.sleep(5)
-                poll_count += 1
-
-                # Get updated operation status
-                operation = self.client.operations.get(operation)
-
-                if poll_count % 6 == 0:  # Log every 30 seconds
-                    logger.info(f"Still generating... ({poll_count * 5}s elapsed)")
-
-                if poll_count >= max_polls:
-                    raise TimeoutError("Video generation timed out after 10 minutes")
+            # Wait for operation completion with minimal polling overhead
+            timeout_seconds = 600
+            logger.info("Waiting for video generation to complete (cost-aware wait)...")
+            operation = self._wait_for_operation(operation, timeout=timeout_seconds)
 
             logger.info("Video generation completed!")
             return operation
@@ -303,13 +338,15 @@ class VeoVideoGenerator:
 
             logger.info(f"Downloading video from: {file_uri}")
 
-            # Download with retry logic
-            max_retries = 3
+            # Download with retry logic (cost-optimized: fail fast with only 2 retries)
+            max_retries = 2  # Reduced from 3 to 2 for cost optimization (fail fast)
             retry_delay = 2  # seconds
+            logger.info(f"API Cost Optimization: Using max_retries={max_retries} to fail fast on download errors")
 
             for attempt in range(max_retries):
                 try:
                     logger.info(f"Download attempt {attempt + 1}/{max_retries}...")
+                    logger.warning(f"API Call Attempt (video download): {attempt + 1}/{max_retries}")
 
                     # Download from URI
                     self._download_from_uri(file_uri, output_path)
@@ -323,10 +360,11 @@ class VeoVideoGenerator:
                         raise IOError(f"Downloaded file is empty: {output_path}")
 
                     logger.info(f"Video downloaded successfully: {output_path} ({file_size} bytes)")
+                    logger.info(f"Total download attempts needed: {attempt + 1}")
                     return output_path
 
                 except (BrokenPipeError, ConnectionError, IOError, requests.exceptions.RequestException) as e:
-                    logger.warning(f"Download attempt {attempt + 1} failed: {type(e).__name__}: {e}")
+                    logger.warning(f"Download attempt {attempt + 1}/{max_retries} failed: {type(e).__name__}: {e}")
 
                     # Clean up partial file if it exists
                     if os.path.exists(output_path):
@@ -341,6 +379,7 @@ class VeoVideoGenerator:
                         time.sleep(retry_delay)
                         retry_delay *= 2  # Exponential backoff
                     else:
+                        logger.warning(f"Failed to download after {max_retries} attempts (fail-fast strategy)")
                         raise RuntimeError(f"Failed to download video after {max_retries} attempts") from e
 
         except Exception as e:

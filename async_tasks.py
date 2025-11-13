@@ -80,12 +80,12 @@ class BaseVideoTask(Task):
                 logger.error(f"Failed to update progress in Supabase: {e}")
 
 
+# Paid Veo API call: retries disabled to avoid double-billing on failures.
 @celery_app.task(
     bind=True,
     base=BaseVideoTask,
     name='async_tasks.veo_generate_task',
-    max_retries=3,
-    default_retry_delay=60,
+    max_retries=0,
     soft_time_limit=900,
     time_limit=1200,
 )
@@ -162,16 +162,135 @@ def veo_generate_task(self, db_task_id: str, image_path: str, prompt: str,
 
     except Exception as exc:
         logger.error(f"Task failed: {exc}", exc_info=True)
+        # Raise immediately so the caller can handle the failure without issuing another paid Veo call.
+        raise
 
-        # リトライ判定
-        if isinstance(exc, (ConnectionError, TimeoutError)) and self.request.retries < self.max_retries:
-            supabase_client.update_task(db_task_id, {
-                'status': 'retry',
-                'retry_count': self.request.retries + 1,
-                'error_message': f"Retrying... ({self.request.retries + 1}/{self.max_retries})"
-            })
-            raise self.retry(exc=exc, countdown=60 * (2 ** self.request.retries))
 
+# Paid Veo API call: retries disabled to avoid triple-billing (3 clips × retries).
+@celery_app.task(
+    bind=True,
+    base=BaseVideoTask,
+    name='async_tasks.property_video_generation_task',
+    max_retries=0,
+    soft_time_limit=1800,  # 30 minutes (generates 3 videos)
+    time_limit=2400,       # 40 minutes hard limit
+)
+def property_video_generation_task(self, db_task_id: str, session_id: str,
+                                     image_paths: list, user_id: str = None):
+    """
+    Property video generation task - generates 3 video clips and composes final video
+
+    Args:
+        db_task_id: データベースタスクID
+        session_id: セッションID
+        image_paths: 入力画像のパスリスト（3つ必要）
+        user_id: ユーザーID
+    """
+    from generate_property_video import PropertyVideoGenerator
+
+    logger.info(f"Starting property video generation: {db_task_id}")
+
+    # Warn about API costs
+    num_api_calls = len(image_paths)
+    logger.warning(f"⚠️  BILLABLE API CALLS: This task will make {num_api_calls} paid Veo API calls")
+    logger.warning(f"⚠️  Images to process: {image_paths}")
+
+    # タスク開始
+    supabase_client.update_task(db_task_id, {
+        'status': 'running',
+        'started_at': datetime.utcnow().isoformat()
+    })
+
+    try:
+        api_key = os.getenv("GOOGLE_API_KEY")
+        if not api_key:
+            raise ValueError("GOOGLE_API_KEY is not set")
+
+        # 進捗更新: Starting
+        self.update_progress(db_task_id, 10, "物件動画生成を開始中...")
+
+        # 出力ディレクトリの設定
+        output_dir = os.path.join('outputs', 'property_videos', user_id or 'anonymous')
+
+        # PropertyVideoGeneratorの初期化
+        generator = PropertyVideoGenerator(
+            api_key=api_key,
+            output_dir=output_dir,
+            session_name=session_id
+        )
+
+        logger.info(f"Session directory: {generator.session_dir}")
+
+        # 進捗更新: Generating clips
+        self.update_progress(db_task_id, 50,
+                           f"{len(image_paths)}個の動画クリップを生成中... (これには15-20分かかります)")
+
+        logger.warning(f"⚠️  Starting generation of {len(image_paths)} video clips (billable API calls)")
+
+        # Step 1: Generate video clips from images
+        video_clips = generator.generate_video_clips(
+            image_paths=image_paths,
+            duration=8
+        )
+
+        logger.info(f"✓ Generated {len(video_clips)} video clips")
+        logger.warning(f"⚠️  Completed {len(video_clips)} billable API calls")
+
+        # 進捗更新: Composing
+        self.update_progress(db_task_id, 80, "最終動画を作成中...")
+
+        # Step 2: Compose final video
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        output_name = f"property_video_{timestamp}.mp4"
+
+        final_video_path = generator.compose_final_video(
+            video_clips=video_clips,
+            output_name=output_name,
+            transition_type="fade",
+            transition_duration=0.5
+        )
+
+        logger.info(f"✓ Final video created: {final_video_path}")
+
+        # 進捗更新: Saving results
+        self.update_progress(db_task_id, 95, "結果を保存中...")
+
+        # Get file size
+        file_size = os.path.getsize(final_video_path) if os.path.exists(final_video_path) else 0
+
+        # Save result metadata
+        supabase_client.update_task(db_task_id, {
+            'result_path': final_video_path,
+            'result_url': f"/outputs/{os.path.relpath(final_video_path, 'outputs')}",
+            'result_metadata': {
+                'clips_generated': len(video_clips),
+                'api_calls_used': num_api_calls,
+                'session_id': session_id,
+                'input_images': image_paths,
+                'clips_dir': str(generator.clips_dir),
+                'session_dir': str(generator.session_dir),
+                'file_size': file_size,
+                'transition_type': 'fade',
+                'transition_duration': 0.5
+            }
+        })
+
+        # 進捗更新: Complete
+        self.update_progress(db_task_id, 100, "完了")
+
+        logger.info(f"Property video generation completed: {final_video_path}")
+        logger.warning(f"✓ Total billable API calls used: {num_api_calls}")
+
+        return {
+            'video_path': final_video_path,
+            'clips_generated': len(video_clips),
+            'api_calls_used': num_api_calls,
+            'session_dir': str(generator.session_dir)
+        }
+
+    except Exception as exc:
+        logger.error(f"Task failed: {exc}", exc_info=True)
+        # Raise immediately so the caller can handle the failure without issuing more paid Veo calls.
         raise
 
 
