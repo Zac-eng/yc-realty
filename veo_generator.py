@@ -357,7 +357,7 @@ class VeoVideoGenerator:
         duration: str = "8s",
         aspect_ratio: str = "16:9",
         resolution: str = "720p",
-        generate_audio: bool = True
+        generate_audio: bool = False
     ) -> str:
         """
         Complete workflow: generate video from image, download result
