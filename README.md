@@ -1,6 +1,6 @@
 # Luxury Real Estate AI Video Generation System
 
-Complete automation system for generating high-end property videos using **Google Veo** and **FFmpeg**.
+Complete automation system for generating high-end property videos and video editor using **Google Veo** and **FFmpeg**.
 
 ## Features
 
@@ -10,6 +10,16 @@ Complete automation system for generating high-end property videos using **Googl
 - **High-End Prompts**: Pre-configured cinematic prompts for luxury real estate
 - **Complete Workflow**: From image upload to final video output
 - **Progress Tracking**: Real-time progress bars and detailed logging
+- **AI Video Editor**: Edit unrelated imagery which Veo has created.
+## AI Video Editor (Frame-by-Frame Editing)
+
+This system now includes a complete AI-powered video editor to fine-tune the generated videos.
+
+### Features(AI Video Editor)
+- **Frame Extraction**: Automatically splits the video into **6 evenly-spaced frames** for granular editing.
+- **AI-Powered Editing**: A chat-based interface allows users to describe desired edits with a text prompt (e.g., "Make the sunset more vibrant"). The AI generates **4 image variations** for selection.
+- **Video Rebuilding**: Reconstructs the final video with the user's selected edited frames, maintaining the original video quality.
+
 
 ## System Architecture
 
