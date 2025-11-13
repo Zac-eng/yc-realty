@@ -753,13 +753,20 @@
 
         // ==================== エクスポート ====================
         exportBtn.addEventListener('click', () => {
-            if (state.frames.length === 0) {
+            let currentSrc = videoSource.getAttribute('src') || videoPlayer.currentSrc;
+
+            if (!currentSrc) {
                 alert('Please upload a video first');
                 return;
             }
 
-            if (Object.keys(state.editedFrames).length === 0) {
-                alert('No frames have been edited yet');
+            if (currentSrc.startsWith(window.location.origin)) {
+                currentSrc = currentSrc.replace(window.location.origin, '');
+            }
+
+            const normalizedPath = currentSrc.replace(/^\/+/, '');
+            if (!normalizedPath) {
+                alert('Unable to determine the video to export');
                 return;
             }
 
@@ -768,7 +775,8 @@
 
             fetch('/video/export', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ video_path: normalizedPath })
             })
             .then(res => res.json())
             .then(data => {

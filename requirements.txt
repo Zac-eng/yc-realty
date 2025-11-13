@@ -1,6 +1,28 @@
+# Web Framework
+Flask==3.0.0
+Flask-CORS==4.0.0
+
+# Async Task Queue
+celery==5.3.4
+redis==5.0.1
+flower==2.0.1
+
+# Database
+supabase==2.3.4
+psycopg2-binary==2.9.9
+
+# Video Processing
+opencv-python==4.8.1.78
+Pillow==10.1.0
+numpy==1.26.2
+
+# Google Cloud / AI
 google-genai>=1.0.0
-requests>=2.31.0
-python-dotenv>=1.0.0
-Pillow>=10.0.0
-tqdm>=4.66.0
-Flask>=2.3.0
+google-cloud-aiplatform==1.38.1
+google-auth==2.25.2
+
+# Utilities
+python-dotenv==1.0.0
+requests==2.31.0
+tqdm==4.66.0
+werkzeug==3.0.1

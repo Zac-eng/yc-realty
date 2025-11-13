@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Video Generator - Async</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 600px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        h1 {
+            color: #667eea;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .upload-area {
+            border: 3px dashed #667eea;
+            border-radius: 10px;
+            padding: 30px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-bottom: 20px;
+        }
+
+        .upload-area:hover {
+            background: #f8f9ff;
+        }
+
+        .upload-area.dragover {
+            background: #e8ebff;
+            border-color: #764ba2;
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        input[type="text"], textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+
+        textarea {
+            min-height: 80px;
+            resize: vertical;
+        }
+
+        button {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .progress-container {
+            margin-top: 20px;
+            display: none;
+        }
+
+        .progress-bar-container {
+            background: #e0e0e0;
+            border-radius: 10px;
+            height: 30px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            width: 0%;
+            transition: width 0.5s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+
+        .status-text {
+            text-align: center;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .result-area {
+            margin-top: 20px;
+            display: none;
+        }
+
+        video {
+            width: 100%;
+            border-radius: 10px;
+            margin-bottom: 10px;
+        }
+
+        .error {
+            background: #ffebee;
+            color: #c62828;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+            display: none;
+        }
+
+        .task-list {
+            margin-top: 30px;
+            border-top: 2px solid #eee;
+            padding-top: 20px;
+        }
+
+        .task-item {
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+        }
+
+        .task-item.success {
+            background: #e8f5e9;
+        }
+
+        .task-item.failed {
+            background: #ffebee;
+        }
+
+        .task-item.running {
+            background: #fff3e0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎬 AI Video Generator</h1>
+        <p class="subtitle">非同期処理対応版 - Celery + Supabase</p>
+
+        <div class="upload-area" id="uploadArea">
+            <p>📸 画像をドラッグ&ドロップ または クリックして選択</p>
+            <input type="file" id="imageInput" accept="image/*">
+        </div>
+
+        <div id="imagePreview" style="display: none; margin-bottom: 15px;">
+            <img id="previewImg" style="max-width: 100%; border-radius: 10px;">
+        </div>
+
+        <textarea id="promptInput" placeholder="動画のプロンプトを入力してください（例: A serene mountain landscape at sunset）"></textarea>
+
+        <button id="generateBtn" disabled>🚀 動画生成開始</button>
+
+        <div class="progress-container" id="progressContainer">
+            <div class="progress-bar-container">
+                <div class="progress-bar" id="progressBar">0%</div>
+            </div>
+            <p class="status-text" id="statusText">準備中...</p>
+        </div>
+
+        <div class="error" id="errorDiv"></div>
+
+        <div class="result-area" id="resultArea">
+            <h3>✅ 生成完了！</h3>
+            <video id="resultVideo" controls></video>
+            <button onclick="downloadVideo()">📥 ダウンロード</button>
+        </div>
+
+        <div class="task-list" id="taskList" style="display: none;">
+            <h3>📋 タスク履歴</h3>
+            <div id="taskItems"></div>
+        </div>
+    </div>
+
+    <script>
+        let currentImagePath = null;
+        let currentTaskId = null;
+        let pollingInterval = null;
+
+        const uploadArea = document.getElementById('uploadArea');
+        const imageInput = document.getElementById('imageInput');
+        const imagePreview = document.getElementById('imagePreview');
+        const previewImg = document.getElementById('previewImg');
+        const promptInput = document.getElementById('promptInput');
+        const generateBtn = document.getElementById('generateBtn');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressBar = document.getElementById('progressBar');
+        const statusText = document.getElementById('statusText');
+        const errorDiv = document.getElementById('errorDiv');
+        const resultArea = document.getElementById('resultArea');
+        const resultVideo = document.getElementById('resultVideo');
+
+        // Upload area interactions
+        uploadArea.addEventListener('click', () => imageInput.click());
+
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const file = e.dataTransfer.files[0];
+            if (file && file.type.startsWith('image/')) {
+                handleImageSelect(file);
+            }
+        });
+
+        imageInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                handleImageSelect(file);
+            }
+        });
+
+        async function handleImageSelect(file) {
+            // Show preview
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                previewImg.src = e.target.result;
+                imagePreview.style.display = 'block';
+            };
+            reader.readAsDataURL(file);
+
+            // Upload image
+            const formData = new FormData();
+            formData.append('image', file);
+
+            try {
+                const response = await fetch('/api/upload/image', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (data.file_path) {
+                    currentImagePath = data.file_path;
+                    generateBtn.disabled = false;
+                    showMessage('画像がアップロードされました！', 'success');
+                } else {
+                    showError('画像のアップロードに失敗しました');
+                }
+            } catch (error) {
+                showError('エラー: ' + error.message);
+            }
+        }
+
+        generateBtn.addEventListener('click', async () => {
+            const prompt = promptInput.value.trim();
+
+            if (!prompt) {
+                showError('プロンプトを入力してください');
+                return;
+            }
+
+            if (!currentImagePath) {
+                showError('画像をアップロードしてください');
+                return;
+            }
+
+            // Start generation
+            generateBtn.disabled = true;
+            progressContainer.style.display = 'block';
+            resultArea.style.display = 'none';
+            errorDiv.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/tasks', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        task_type: 'veo_generate',
+                        params: {
+                            image_path: currentImagePath,
+                            prompt: prompt,
+                            duration: 8
+                        }
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.task_id) {
+                    currentTaskId = data.task_id;
+                    startPolling(data.task_id);
+                } else {
+                    showError('タスクの開始に失敗しました');
+                    generateBtn.disabled = false;
+                }
+            } catch (error) {
+                showError('エラー: ' + error.message);
+                generateBtn.disabled = false;
+            }
+        });
+
+        function startPolling(taskId) {
+            // Clear any existing polling
+            if (pollingInterval) {
+                clearInterval(pollingInterval);
+            }
+
+            // Poll every 2 seconds
+            pollingInterval = setInterval(() => checkTaskStatus(taskId), 2000);
+
+            // Check immediately
+            checkTaskStatus(taskId);
+        }
+
+        async function checkTaskStatus(taskId) {
+            try {
+                const response = await fetch(`/api/tasks/${taskId}`);
+                const task = await response.json();
+
+                // Update progress bar
+                const progress = task.progress || 0;
+                progressBar.style.width = progress + '%';
+                progressBar.textContent = progress + '%';
+
+                // Update status text
+                statusText.textContent = task.current_step || task.status;
+
+                // Check task status
+                if (task.status === 'success') {
+                    // Task completed successfully
+                    clearInterval(pollingInterval);
+                    showResult(task);
+                    generateBtn.disabled = false;
+                } else if (task.status === 'failed') {
+                    // Task failed
+                    clearInterval(pollingInterval);
+                    showError('エラー: ' + (task.error_message || 'タスクが失敗しました'));
+                    generateBtn.disabled = false;
+                    progressContainer.style.display = 'none';
+                } else if (task.status === 'cancelled') {
+                    // Task cancelled
+                    clearInterval(pollingInterval);
+                    showError('タスクがキャンセルされました');
+                    generateBtn.disabled = false;
+                    progressContainer.style.display = 'none';
+                }
+            } catch (error) {
+                console.error('Polling error:', error);
+            }
+        }
+
+        function showResult(task) {
+            progressContainer.style.display = 'none';
+            resultArea.style.display = 'block';
+
+            if (task.result_url) {
+                resultVideo.src = task.result_url;
+            }
+        }
+
+        function showError(message) {
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+        }
+
+        function showMessage(message, type) {
+            statusText.textContent = message;
+        }
+
+        function downloadVideo() {
+            if (currentTaskId) {
+                // Get task details and download
+                fetch(`/api/tasks/${currentTaskId}`)
+                    .then(res => res.json())
+                    .then(task => {
+                        if (task.result_url) {
+                            window.location.href = task.result_url;
+                        }
+                    });
+            }
+        }
+
+        // Load recent tasks on page load
+        window.addEventListener('load', async () => {
+            try {
+                const response = await fetch('/api/tasks?limit=5');
+                const data = await response.json();
+
+                if (data.tasks && data.tasks.length > 0) {
+                    displayTaskList(data.tasks);
+                }
+            } catch (error) {
+                console.error('Failed to load tasks:', error);
+            }
+        });
+
+        function displayTaskList(tasks) {
+            const taskList = document.getElementById('taskList');
+            const taskItems = document.getElementById('taskItems');
+
+            taskItems.innerHTML = '';
+
+            tasks.forEach(task => {
+                const item = document.createElement('div');
+                item.className = `task-item ${task.status}`;
+                item.innerHTML = `
+                    <strong>${task.task_type}</strong>
+                    <span style="float: right; font-size: 12px;">${task.status}</span>
+                    <br>
+                    <small>${new Date(task.created_at).toLocaleString()}</small>
+                `;
+                taskItems.appendChild(item);
+            });
+
+            taskList.style.display = 'block';
+        }
+    </script>
+</body>
+</html>
